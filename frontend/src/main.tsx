@@ -1,7 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { ThemeProvider, CssBaseline, createTheme } from '@mui/material'
-import './index.css'
 import App from './App.tsx'
 
 import '@fontsource/barlow-semi-condensed/400.css';
@@ -14,6 +13,8 @@ const theme = createTheme({
   },
   palette: {
     mode: 'dark',
+    background: { default: '#151515' },
+    text: { primary: '#ececec', secondary: '#959595' },
   },
 });
 
