@@ -1,7 +1,14 @@
+import { useState } from 'react';
 import { Box, Typography, Button, Divider } from '@mui/material';
 import { MUTED } from '../../constants';
+import LobbyDialog, { type Lobby } from '../lobby/LobbyDialog';
 
 export default function Sidebar() {
+  const [lobbyOpen, setLobbyOpen] = useState(false);
+
+  // TODO: populate from the server once the protocol exists
+  const [lobbies] = useState<Lobby[]>([]);
+
   return (
     <Box sx={{ flex: '1 1 260px', maxWidth: 320, display: 'flex', flexDirection: 'column', pt: '34px' }}>
       <Typography variant="h4" sx={{ fontWeight: 500, letterSpacing: '-0.02em', lineHeight: 1.1, mb: 1 }}>
@@ -12,6 +19,7 @@ export default function Sidebar() {
       </Typography>
 
       <Button
+        onClick={() => setLobbyOpen(true)}
         sx={{
           alignSelf: 'flex-start',
           mt: '20px',
@@ -42,29 +50,37 @@ export default function Sidebar() {
 
       <Box sx={{ display: 'flex', gap: '12px', pt: '20px' }}>
         {(['Offer draw', 'Resign'] as const).map((label) => (
-            <Button
+          <Button
             key={label}
             disabled
             variant="outlined"
             sx={{
-                fontSize: 13,
-                fontWeight: 500,
-                textTransform: 'none',
-                color: '#b4b4b4',
-                borderColor: '#404040',
-                borderRadius: '8px',
-                px: '16px',
-                height: 34,
-                '&.Mui-disabled': {
+              fontSize: 13,
+              fontWeight: 500,
+              textTransform: 'none',
+              color: '#b4b4b4',
+              borderColor: '#404040',
+              borderRadius: '8px',
+              px: '16px',
+              height: 34,
+              '&.Mui-disabled': {
                 color: 'rgba(180,180,180,.45)',
                 borderColor: 'rgba(64,64,64,.6)',
-                },
+              },
             }}
-            >
+          >
             {label}
-            </Button>
+          </Button>
         ))}
-        </Box>
+      </Box>
+
+      <LobbyDialog
+        open={lobbyOpen}
+        onClose={() => setLobbyOpen(false)}
+        lobbies={lobbies}
+        onCreate={(name, passcode) => console.log('create', name, passcode)}
+        onJoin={(id, passcode) => console.log('join', id, passcode)}
+      />
     </Box>
   );
 }
