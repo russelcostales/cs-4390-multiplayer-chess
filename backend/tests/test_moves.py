@@ -3,7 +3,7 @@ import threading
 import chess
 import pytest
 
-from matchmaking import Game
+from lobby import Game
 from moves import MoveError, MoveService
 
 

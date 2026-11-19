@@ -1,7 +1,7 @@
-"""FIFO matchmaking.
+"""Lobby message handling.
 
 Identity comes from the server-side Client, never from the message body.
-Queue changes and match notification share one lock so a player is paired at most once.
+State changes and notifications share one lock so a player is seated at most once.
 """
 
 import logging
@@ -10,22 +10,22 @@ import threading
 import time
 from collections import deque
 from collections.abc import Callable
-from dataclasses import dataclass
-from enum import Enum
-from itertools import count
 from typing import Protocol
-from lobby import Color, Game
 
+from lobby import Game, LobbyError, LobbyManager
 from messages import (
     MAX_MESSAGE_BYTES,
-    CancelMatchMessage,
     ClientMessage,
+    CreateLobbyMessage,
     ErrorCode,
-    FindMatchMessage,
+    JoinLobbyMessage,
+    LeaveLobbyMessage,
+    ListLobbiesMessage,
     MessageRejected,
     error_payload,
     parse_client_message,
 )
+from moves import MoveService
 
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,7 @@ class Matchmaker:
         rate_limit: int = DEFAULT_RATE_LIMIT,
         rate_window_seconds: float = DEFAULT_RATE_WINDOW_SECONDS,
         clock: Callable[[], float] | None = None,
+        moves: MoveService | None = None,
     ) -> None:
         if max_message_bytes < 1:
             raise ValueError("max_message_bytes must be positive")
@@ -86,11 +87,9 @@ class Matchmaker:
         self._rate_window = rate_window_seconds
         self._clock = clock if clock is not None else time.monotonic
         self._lock = threading.Lock()
-        self._ids = count(1)
-        self._queue: deque[str] = deque()
-        self._waiting: set[str] = set()
+        self._lobbies = LobbyManager()
+        self._moves = moves if moves is not None else MoveService()
         self._games: dict[str, Game] = {}
-        self._player_game: dict[str, str] = {}
         self._clients: dict[str, Client] = {}
         self._hits: dict[str, deque[float]] = {}
 
@@ -102,9 +101,8 @@ class Matchmaker:
             if existing is not None:
                 if existing.connected:
                     raise ValueError(f"client already connected: {client_id}")
-                self._remove_waiting(client_id)
                 self._hits.pop(client_id, None)
-                self._release_game(existing)
+                self._leave(client_id)
             client = Client(client_id, _display_name(client_id, display_name))
             self._clients[client_id] = client
             return client
@@ -114,12 +112,11 @@ class Matchmaker:
             client.connected = False
             if self._clients.get(client.id) is not client:
                 return
-            self._remove_waiting(client.id)
             self._hits.pop(client.id, None)
-            self._release_game(client)
+            self._leave(client.id)
 
     def handle_message(self, client: Client, raw: object) -> None:
-        """Validate one payload, then run the matchmaking handler.
+        """Validate one payload, then run the lobby handler.
 
         ``client`` is the server-side connection. Fields in ``raw`` cannot set
         identity, color, or game id.
@@ -131,16 +128,10 @@ class Matchmaker:
                 return
             self._handle_locked(client, raw)
 
-    def waiting_ids(self) -> list[str]:
-        with self._lock:
-            return list(self._queue)
-
     def game_of(self, client_id: str) -> Game | None:
         with self._lock:
-            game_id = self._player_game.get(client_id)
-            if game_id is None:
-                return None
-            return self._games.get(game_id)
+            lobby = self._lobbies.lobby_of(client_id)
+            return self._games.get(lobby.id) if lobby else None
 
     def games(self) -> list[Game]:
         with self._lock:
@@ -157,10 +148,14 @@ class Matchmaker:
             self._reject(client, rejected.code, rejected.public_message)
 
     def _dispatch(self, client: Client, message: ClientMessage) -> None:
-        if isinstance(message, FindMatchMessage):
-            self._find_match(client)
-        elif isinstance(message, CancelMatchMessage):
-            self._cancel(client)
+        if isinstance(message, CreateLobbyMessage):
+            self._create_lobby(client, message)
+        elif isinstance(message, ListLobbiesMessage):
+            self._list_lobbies(client)
+        elif isinstance(message, JoinLobbyMessage):
+            self._join_lobby(client, message)
+        elif isinstance(message, LeaveLobbyMessage):
+            self._leave_lobby(client)
         else:
             raise MessageRejected(ErrorCode.INVALID_MESSAGE, "Unknown message type")
 
@@ -176,176 +171,83 @@ class Matchmaker:
         except DeliveryError:
             logger.warning("undeliverable error client=%s code=%s", client.id, code.value)
 
-    def _find_match(self, client: Client) -> None:
-        if client.id in self._player_game:
-            raise MessageRejected(ErrorCode.ALREADY_IN_GAME, "Already in a game")
-        if client.id in self._waiting:
-            raise MessageRejected(ErrorCode.ALREADY_QUEUED, "Already queued for a match")
-
-        self._enqueue(client.id)
-        requeued = self._drain()
-        if client.id not in self._waiting or client.id in requeued:
-            return
+    def _create_lobby(self, client: Client, message: CreateLobbyMessage) -> None:
         try:
-            client.send({"type": "searching"})
-        except DeliveryError:
-            self._remove_waiting(client.id)
-            client.connected = False
-            logger.warning("searching delivery failed client=%s", client.id)
+            lobby = self._lobbies.create(client.id, message.name, message.passcode)
+        except LobbyError as error:
+            raise _lobby_rejection(error) from error
+        self._send_or_drop(client, {"type": "lobby_created", "lobby": lobby.summary()})
 
-    def _cancel(self, client: Client) -> None:
-        if client.id not in self._waiting:
-            raise MessageRejected(ErrorCode.NOT_QUEUED, "Not queued for a match")
-        self._remove_waiting(client.id)
+    def _list_lobbies(self, client: Client) -> None:
+        lobbies = [lobby.summary() for lobby in self._lobbies.list_open()]
+        self._send_or_drop(client, {"type": "lobby_list", "lobbies": lobbies})
+
+    def _join_lobby(self, client: Client, message: JoinLobbyMessage) -> None:
         try:
-            client.send({"type": "match_cancelled"})
-        except DeliveryError:
-            client.connected = False
+            lobby = self._lobbies.join(client.id, message.lobbyId, message.passcode)
+        except LobbyError as error:
+            raise _lobby_rejection(error) from error
 
-    def _drain(self) -> set[str]:
-        requeued: set[str] = set()
-        while len(self._queue) >= 2:
-            requeued.update(self._attempt_pair())
-        return requeued
-
-    def _attempt_pair(self) -> set[str]:
-        # Called with the matchmaker lock held. Notification finishes before
-        # the lock is released, so a second join cannot pair either player again.
-        earlier = self._pop_waiting()
-        later = self._pop_waiting()
-        ready = self._ready(earlier, later)
-        if len(ready) < 2:
-            return self._requeue_front_in_order(ready)
-        if ready[0] == ready[1]:
-            logger.error("skipped self-pair client=%s", ready[0])
-            return self._requeue_front_in_order([ready[0]])
-
-        white_id, black_id = self._assign_colors(ready[0], ready[1])
-        try:
-            game = Game(id=str(next(self._ids)), white_id=white_id, black_id=black_id)
-        except ValueError:
-            logger.error("skipped self-pair client=%s", ready[0])
-            return self._requeue_front_in_order(ready)
-
+        white_id, black_id = self._assign_colors(lobby.host, client.id)
+        game = Game(id=lobby.id, white_id=white_id, black_id=black_id)
         self._games[game.id] = game
-        self._player_game[white_id] = game.id
-        self._player_game[black_id] = game.id
+        self._moves.open_game(game)
 
-        notified: list[str] = []
-        failed = False
-        for player_id in ready:
+        failed: list[str] = []
+        for player_id in (lobby.host, client.id):
             player = self._clients[player_id]
             try:
-                player.send(self._match_found_message(game, player_id))
+                player.send(self._match_started_message(game, player_id))
             except DeliveryError:
-                failed = True
                 player.connected = False
+                failed.append(player_id)
                 logger.warning("match delivery failed client=%s game=%s", player_id, game.id)
-            else:
-                notified.append(player_id)
+        for player_id in failed:
+            self._leave(player_id)
 
-        if not failed:
-            return set()
+    def _leave_lobby(self, client: Client) -> None:
+        if self._lobbies.lobby_of(client.id) is None:
+            raise MessageRejected(ErrorCode.NOT_IN_LOBBY, "Not in a lobby")
+        self._leave(client.id)
+        self._send_or_drop(client, {"type": "lobby_left"})
 
-        self._rollback(game)
-        return self._requeue_front_in_order(notified)
-
-    def _ready(self, first: str, second: str) -> list[str]:
-        ready: list[str] = []
-        for player_id in (first, second):
-            if player_id in ready:
-                continue
-            player = self._clients.get(player_id)
-            if player is None or not player.connected:
-                continue
-            if player_id in self._player_game:
-                continue
-            ready.append(player_id)
-        return ready
-
-    def _assign_colors(self, earlier: str, later: str) -> tuple[str, str]:
-        if self._rng.random() < 0.5:
-            return earlier, later
-        return later, earlier
-
-    def _match_found_message(self, game: Game, player_id: str) -> dict:
-        opponent = self._clients[game.opponent_of(player_id)]
-        return {
-            "type": "match_found",
-            "gameId": game.id,
-            "color": game.color_of(player_id),
-            "opponent": {"id": opponent.id, "name": opponent.display_name},
-        }
-
-    def _requeue_front_in_order(self, client_ids: list[str]) -> set[str]:
-        requeued: set[str] = set()
-        for client_id in reversed(client_ids):
-            if self._requeue_front(client_id):
-                requeued.add(client_id)
-        return requeued
-
-    def _requeue_front(self, client_id: str) -> bool:
-        player = self._clients.get(client_id)
-        if player is None or not player.connected:
-            return False
-        if client_id in self._player_game or client_id in self._waiting:
-            return False
-        self._queue.appendleft(client_id)
-        self._waiting.add(client_id)
-        try:
-            player.send({"type": "requeued", "reason": "opponent_unavailable"})
-        except DeliveryError:
-            self._remove_waiting(client_id)
-            player.connected = False
-            logger.warning("requeue delivery failed client=%s", client_id)
-            return False
-        return True
-
-    def _release_game(self, client: Client) -> None:
-        game_id = self._player_game.get(client.id)
-        if game_id is None:
+    def _leave(self, client_id: str) -> None:
+        result = self._lobbies.leave(client_id)
+        if result is None:
             return
-        game = self._games.get(game_id)
+        game = self._games.pop(result.lobby.id, None)
         if game is None:
-            self._player_game.pop(client.id, None)
             return
-        opponent_id = game.opponent_of(client.id)
-        self._rollback(game)
-        opponent = self._clients.get(opponent_id)
+        self._moves.close_game(game.id)
+        opponent = self._clients.get(result.opponent) if result.opponent else None
         if opponent is None or not opponent.connected:
             return
         try:
             opponent.send({"type": "opponent_disconnected", "gameId": game.id})
         except DeliveryError:
             opponent.connected = False
-            self._remove_waiting(opponent.id)
 
-    def _rollback(self, game: Game) -> None:
-        self._games.pop(game.id, None)
-        if self._player_game.get(game.white_id) == game.id:
-            self._player_game.pop(game.white_id, None)
-        if self._player_game.get(game.black_id) == game.id:
-            self._player_game.pop(game.black_id, None)
-
-    def _enqueue(self, client_id: str) -> None:
-        if client_id in self._waiting:
-            return
-        self._queue.append(client_id)
-        self._waiting.add(client_id)
-
-    def _pop_waiting(self) -> str:
-        client_id = self._queue.popleft()
-        self._waiting.discard(client_id)
-        return client_id
-
-    def _remove_waiting(self, client_id: str) -> None:
-        if client_id not in self._waiting:
-            return
-        self._waiting.remove(client_id)
+    def _send_or_drop(self, client: Client, message: dict) -> None:
         try:
-            self._queue.remove(client_id)
-        except ValueError:
-            return
+            client.send(message)
+        except DeliveryError:
+            client.connected = False
+            self._leave(client.id)
+            logger.warning("delivery failed client=%s type=%s", client.id, message["type"])
+
+    def _assign_colors(self, host: str, guest: str) -> tuple[str, str]:
+        if self._rng.random() < 0.5:
+            return host, guest
+        return guest, host
+
+    def _match_started_message(self, game: Game, player_id: str) -> dict:
+        opponent = self._clients[game.opponent_of(player_id)]
+        return {
+            "type": "match_started",
+            "gameId": game.id,
+            "color": game.color_of(player_id),
+            "opponent": {"id": opponent.id, "name": opponent.display_name},
+        }
 
     def _consume_rate(self, client_id: str) -> bool:
         now = self._clock()
@@ -365,3 +267,9 @@ def _display_name(client_id: str, display_name: str | None) -> str:
     if not cleaned:
         return client_id
     return cleaned[:64]
+
+
+def _lobby_rejection(error: LobbyError) -> MessageRejected:
+    code = ErrorCode(error.reason.value.upper())
+    text = error.reason.value.replace("_", " ").capitalize()
+    return MessageRejected(code, text)
