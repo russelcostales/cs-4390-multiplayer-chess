@@ -40,7 +40,6 @@ class Lobby:
     def is_full(self) -> bool:
         return self.guest is not None
 
-    # passcode is never included
     def summary(self) -> dict:
         return {"id": self.id, "name": self.name, "locked": self.locked}
 
@@ -105,7 +104,6 @@ class LobbyManager:
         self._player_lobby[player] = lobby.id
         return lobby
 
-    # also used for disconnects: the caller notifies result.opponent
     def leave(self, player: str) -> LeaveResult | None:
         lobby = self.lobby_of(player)
         if lobby is None:
@@ -119,5 +117,5 @@ class LobbyManager:
         self._player_lobby.pop(lobby.host, None)
         if lobby.guest:
             self._player_lobby.pop(lobby.guest, None)
-            
+
         return LeaveResult(lobby=lobby, opponent=opponent)
