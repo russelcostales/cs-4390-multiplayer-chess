@@ -6,7 +6,7 @@ from collections.abc import Callable
 
 import pytest
 
-from matchmaking import Client, Matchmaker
+from server import Client, Matchmaker
 from messages import MAX_MESSAGE_BYTES
 from moves import MoveService
 
@@ -424,7 +424,7 @@ def test_rejections_are_logged_without_echoing_input(caplog):
     client = mm.connect("a")
     secret = "SUPERSECRETTOKEN"
     raw = json.dumps({"type": "create_lobby", "name": "x", "token": secret})
-    with caplog.at_level(logging.WARNING, logger="matchmaking"):
+    with caplog.at_level(logging.WARNING, logger="server"):
         mm.handle_message(client, raw)
 
     assert secret not in caplog.text
