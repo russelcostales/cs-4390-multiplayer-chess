@@ -13,7 +13,7 @@ from enum import Enum
 
 import chess
 
-from matchmaking import Color, Game
+from lobby import Color, Game
 
 
 logger = logging.getLogger(__name__)

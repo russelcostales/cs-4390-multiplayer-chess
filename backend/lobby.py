@@ -17,6 +17,36 @@ class LobbyErrorReason(str, Enum):
     INVALID_NAME = "invalid_name"
 
 
+class Color(str, Enum):
+    WHITE = "white"
+    BLACK = "black"
+
+
+@dataclass(frozen=True)
+class Game:
+    id: str
+    white_id: str
+    black_id: str
+
+    def __post_init__(self) -> None:
+        if self.white_id == self.black_id:
+            raise ValueError("a player cannot be paired with themselves")
+
+    def color_of(self, player_id: str) -> str:
+        if player_id == self.white_id:
+            return Color.WHITE.value
+        if player_id == self.black_id:
+            return Color.BLACK.value
+        raise KeyError(player_id)
+
+    def opponent_of(self, player_id: str) -> str:
+        if player_id == self.white_id:
+            return self.black_id
+        if player_id == self.black_id:
+            return self.white_id
+        raise KeyError(player_id)
+        
+
 class LobbyError(Exception):
     def __init__(self, reason: LobbyErrorReason) -> None:
         super().__init__(reason.value)

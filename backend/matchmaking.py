@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from itertools import count
 from typing import Protocol
+from lobby import Color, Game
 
 from messages import (
     MAX_MESSAGE_BYTES,
@@ -60,36 +61,6 @@ class Client:
         if not self.connected or message.get("type") in self.undeliverable:
             raise DeliveryError(self.id)
         self.inbox.append(message)
-
-
-class Color(str, Enum):
-    WHITE = "white"
-    BLACK = "black"
-
-
-@dataclass(frozen=True)
-class Game:
-    id: str
-    white_id: str
-    black_id: str
-
-    def __post_init__(self) -> None:
-        if self.white_id == self.black_id:
-            raise ValueError("a player cannot be paired with themselves")
-
-    def color_of(self, player_id: str) -> str:
-        if player_id == self.white_id:
-            return Color.WHITE.value
-        if player_id == self.black_id:
-            return Color.BLACK.value
-        raise KeyError(player_id)
-
-    def opponent_of(self, player_id: str) -> str:
-        if player_id == self.white_id:
-            return self.black_id
-        if player_id == self.black_id:
-            return self.white_id
-        raise KeyError(player_id)
 
 
 class Matchmaker:
