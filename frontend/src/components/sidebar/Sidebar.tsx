@@ -2,12 +2,17 @@ import { useState } from 'react';
 import { Box, Typography, Button, Divider } from '@mui/material';
 import { MUTED } from '../../constants';
 import LobbyDialog, { type Lobby } from '../lobby/LobbyDialog';
+import MoveHistory from './MoveHistory';
 
 export default function Sidebar() {
   const [lobbyOpen, setLobbyOpen] = useState(false);
 
   // TODO: populate from the server once the protocol exists
   const [lobbies] = useState<Lobby[]>([]);
+
+  // TODO: fill from the server's move messages once the socket is in
+  const [moves] = useState<string[]>([]);
+  const turnLabel = moves.length % 2 === 0 ? 'White to play' : 'Black to play';
 
   return (
     <Box sx={{ flex: '1 1 260px', maxWidth: 320, display: 'flex', flexDirection: 'column', pt: '34px' }}>
@@ -42,10 +47,10 @@ export default function Sidebar() {
       <Box sx={{ mt: 5, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 200 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', pb: '10px' }}>
           <Typography sx={{ fontSize: 13, color: '#b4b4b4' }}>Moves</Typography>
-          <Typography sx={{ fontSize: 13, color: MUTED }}>White to play</Typography>
+          <Typography sx={{ fontSize: 13, color: MUTED }}>{turnLabel}</Typography>
         </Box>
         <Divider sx={{ borderColor: 'rgba(236,236,236,.14)' }} />
-        <Typography sx={{ fontSize: 13, color: '#5b5b5b', pt: '12px' }}>No moves yet</Typography>
+        <MoveHistory moves={moves} />
       </Box>
 
       <Box sx={{ display: 'flex', gap: '12px', pt: '20px' }}>
