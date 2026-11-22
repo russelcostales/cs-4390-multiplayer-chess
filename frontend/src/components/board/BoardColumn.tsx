@@ -1,17 +1,41 @@
 import { Chessboard } from 'react-chessboard';
 import { Box } from '@mui/material';
 import PlayerRow from './PlayerRow';
-import { LIGHT, DARK } from '../../constants';
+import { LIGHT, DARK, START_FEN } from '../../constants';
+import type { GameSocket } from '../../hooks/useGameSocket';
+import type { Color } from '../../types/gameState';
 
-export default function BoardColumn() {
+interface BoardColumnProps {
+  socket: GameSocket;
+}
+
+const label = (color: Color) => (color === 'white' ? 'White' : 'Black');
+
+export default function BoardColumn({ socket }: BoardColumnProps) {
+  const { game, fen, turn, makeMove } = socket;
+  const myColor: Color = game?.color ?? 'white';
+  const opponentColor: Color = myColor === 'white' ? 'black' : 'white';
+  const myPrefix = myColor === 'white' ? 'w' : 'b';
+
   return (
     <Box sx={{ flex: '1 1 480px', maxWidth: 600, display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      <PlayerRow prefix="—" label="Black" />
+      <PlayerRow prefix={game ? 'Opponent' : '—'} label={label(opponentColor)} />
 
       <Box sx={{ width: '100%', lineHeight: 0 }}>
         <Chessboard
           options={{
-            id: 'demo-board',
+            id: 'game-board',
+            position: game ? fen : START_FEN,
+            boardOrientation: myColor,
+            allowDragging: game !== null,
+            canDragPiece: ({ piece }) => piece.pieceType.startsWith(myPrefix),
+            onPieceDrop: ({ piece, sourceSquare, targetSquare }) => {
+              if (!game || !targetSquare || turn !== game.color) return false;
+              const promotes =
+                piece.pieceType[1] === 'P' && (targetSquare[1] === '8' || targetSquare[1] === '1');
+              makeMove(`${sourceSquare}${targetSquare}${promotes ? 'q' : ''}`);
+              return false;
+            },
             boardStyle: {
               borderRadius: '8px',
               overflow: 'hidden',
@@ -25,7 +49,7 @@ export default function BoardColumn() {
         />
       </Box>
 
-      <PlayerRow prefix="You" label="White" />
+      <PlayerRow prefix="You" label={label(myColor)} />
     </Box>
   );
 }

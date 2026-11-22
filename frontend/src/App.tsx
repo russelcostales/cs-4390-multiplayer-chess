@@ -11,7 +11,7 @@ export default function App() {
     <Box sx={{ maxWidth: 1080, mx: 'auto', px: '22px', pb: 6 }}>
       <PageHeader />
       <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '48px', alignItems: 'stretch' }}>
-        <BoardColumn />
+        <BoardColumn socket={socket} />
         <Sidebar socket={socket} />
       </Box>
     </Box>
