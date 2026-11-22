@@ -10,6 +10,13 @@ from server import Client, Matchmaker
 from messages import MAX_MESSAGE_BYTES
 from moves import MoveService
 
+def test_client_with_on_send_forwards_instead_of_storing():
+    client = Client("a", "Alice")
+    seen = []
+    client.on_send = seen.append
+    client.send({"type": "ping"})
+    assert seen == [{"type": "ping"}]
+    assert client.inbox == []
 
 CREATE = '{"type":"create_lobby","name":"Room"}'
 LIST = '{"type":"list_lobbies"}'
@@ -492,3 +499,47 @@ def test_concurrent_disconnect_and_leave_close_the_game():
         assert moves.state("1") is None
         assert mm.game_of(host.id) is None
         assert mm.game_of(guest.id) is None
+
+def move(uci: str) -> str:
+    return json.dumps({"type": "move", "move": uci})
+
+
+def started_game() -> tuple[Matchmaker, Client, Client]:
+    mm = Matchmaker(rng=ScriptedRng([0.0]))
+    host = mm.connect("a")
+    guest = mm.connect("b")
+    mm.handle_message(host, CREATE)
+    mm.handle_message(guest, join("1"))
+    return mm, host, guest
+
+
+def test_move_is_sent_to_both_players():
+    mm, host, guest = started_game()
+    mm.handle_message(host, move("e2e4"))
+    for player in (host, guest):
+        update = of_type(player, "move_made")[0]
+        assert update["uci"] == "e2e4"
+        assert update["san"] == "e4"
+        assert update["turn"] == "black"
+        assert update["gameOver"] is False
+
+
+def test_move_out_of_turn_is_rejected_and_not_broadcast():
+    mm, host, guest = started_game()
+    mm.handle_message(guest, move("e7e5"))
+    assert of_type(guest, "error")[0]["code"] == "NOT_YOUR_TURN"
+    assert of_type(host, "move_made") == []
+
+
+def test_illegal_move_is_rejected():
+    mm, host, guest = started_game()
+    mm.handle_message(host, move("e2e5"))
+    assert of_type(host, "error")[0]["code"] == "ILLEGAL_MOVE"
+    assert of_type(guest, "move_made") == []
+
+
+def test_move_without_a_game_is_rejected():
+    mm = Matchmaker()
+    client = mm.connect("a")
+    mm.handle_message(client, move("e2e4"))
+    assert of_type(client, "error")[0]["code"] == "NOT_IN_GAME"

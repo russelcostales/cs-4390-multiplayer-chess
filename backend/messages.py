@@ -22,6 +22,13 @@ class ErrorCode(str, Enum):
     ALREADY_IN_LOBBY = "ALREADY_IN_LOBBY"
     INVALID_NAME = "INVALID_NAME"
     NOT_IN_LOBBY = "NOT_IN_LOBBY"
+    GAME_NOT_FOUND = "GAME_NOT_FOUND"
+    GAME_OVER = "GAME_OVER"
+    NOT_IN_GAME = "NOT_IN_GAME"
+    NOT_YOUR_TURN = "NOT_YOUR_TURN"
+    ILLEGAL_MOVE = "ILLEGAL_MOVE"
+    PROMOTION_REQUIRED = "PROMOTION_REQUIRED"
+    INVALID_FORMAT = "INVALID_FORMAT"
 
 
 class MessageRejected(Exception):
@@ -66,6 +73,11 @@ class LeaveLobbyMessage(_ClientMessage):
     type: Literal["leave_lobby"]
 
 
+class MoveMessage(_ClientMessage):
+    type: Literal["move"]
+    move: str
+
+
 ClientMessage = (
     FindMatchMessage
     | CancelMatchMessage
@@ -73,6 +85,7 @@ ClientMessage = (
     | ListLobbiesMessage
     | JoinLobbyMessage
     | LeaveLobbyMessage
+    | MoveMessage
 )
 
 _MODELS: dict[str, type[_ClientMessage]] = {
@@ -82,6 +95,7 @@ _MODELS: dict[str, type[_ClientMessage]] = {
     "list_lobbies": ListLobbiesMessage,
     "join_lobby": JoinLobbyMessage,
     "leave_lobby": LeaveLobbyMessage,
+    "move": MoveMessage,
 }
 
 
@@ -111,6 +125,7 @@ def parse_client_message(raw: object, *, max_bytes: int = MAX_MESSAGE_BYTES) -> 
             ListLobbiesMessage,
             JoinLobbyMessage,
             LeaveLobbyMessage,
+            MoveMessage,
         ),
     ):
         return parsed

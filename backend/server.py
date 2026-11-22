@@ -22,11 +22,12 @@ from messages import (
     LeaveLobbyMessage,
     ListLobbiesMessage,
     MessageRejected,
+    MoveMessage,
     error_payload,
     parse_client_message,
 )
-from moves import MoveService
 
+from moves import MoveResult, MoveService
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +56,16 @@ class Client:
         # Message types whose send raises. Production leaves this empty so a
         # test can simulate a socket that dies while a notification is written.
         self.undeliverable: set[str] = set()
+        self.on_send: Callable[[dict], None] | None = None
 
     def send(self, message: dict) -> None:
         """Deliver one message. Must not call back into the Matchmaker."""
         if not self.connected or message.get("type") in self.undeliverable:
             raise DeliveryError(self.id)
-        self.inbox.append(message)
+        if self.on_send is not None:
+            self.on_send(message)
+        else:
+            self.inbox.append(message)
 
 
 class Matchmaker:
@@ -156,6 +161,8 @@ class Matchmaker:
             self._join_lobby(client, message)
         elif isinstance(message, LeaveLobbyMessage):
             self._leave_lobby(client)
+        elif isinstance(message, MoveMessage):
+            self._move(client, message)
         else:
             raise MessageRejected(ErrorCode.INVALID_MESSAGE, "Unknown message type")
 
@@ -210,6 +217,20 @@ class Matchmaker:
             raise MessageRejected(ErrorCode.NOT_IN_LOBBY, "Not in a lobby")
         self._leave(client.id)
         self._send_or_drop(client, {"type": "lobby_left"})
+
+    def _move(self, client: Client, message: MoveMessage) -> None:
+        lobby = self._lobbies.lobby_of(client.id)
+        game = self._games.get(lobby.id) if lobby else None
+        if game is None:
+            raise MessageRejected(ErrorCode.NOT_IN_GAME, "Not in a game")
+        result = self._moves.submit_move(game.id, client.id, message.move)
+        if not result.ok:
+            raise MessageRejected(ErrorCode(result.code), result.message)
+        update = _move_message(game.id, result)
+        for player_id in (game.white_id, game.black_id):
+            if game.id not in self._games:
+                break
+            self._send_or_drop(self._clients[player_id], update)
 
     def _leave(self, client_id: str) -> None:
         result = self._lobbies.leave(client_id)
@@ -273,3 +294,18 @@ def _lobby_rejection(error: LobbyError) -> MessageRejected:
     code = ErrorCode(error.reason.value.upper())
     text = error.reason.value.replace("_", " ").capitalize()
     return MessageRejected(code, text)
+
+def _move_message(game_id: str, result: MoveResult) -> dict:
+    return {
+        "type": "move_made",
+        "gameId": game_id,
+        "uci": result.uci,
+        "san": result.san,
+        "fen": result.fen,
+        "turn": result.turn,
+        "isCheck": result.is_check,
+        "gameOver": result.game_over,
+        "result": result.result,
+        "winner": result.winner,
+        "termination": result.termination,
+    }
