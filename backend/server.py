@@ -55,12 +55,16 @@ class Client:
         # Message types whose send raises. Production leaves this empty so a
         # test can simulate a socket that dies while a notification is written.
         self.undeliverable: set[str] = set()
+        self.on_send: Callable[[dict], None] | None = None
 
     def send(self, message: dict) -> None:
         """Deliver one message. Must not call back into the Matchmaker."""
         if not self.connected or message.get("type") in self.undeliverable:
             raise DeliveryError(self.id)
-        self.inbox.append(message)
+        if self.on_send is not None:
+            self.on_send(message)
+        else:
+            self.inbox.append(message)
 
 
 class Matchmaker:

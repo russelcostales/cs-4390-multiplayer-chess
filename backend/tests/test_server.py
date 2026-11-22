@@ -10,6 +10,13 @@ from server import Client, Matchmaker
 from messages import MAX_MESSAGE_BYTES
 from moves import MoveService
 
+def test_client_with_on_send_forwards_instead_of_storing():
+    client = Client("a", "Alice")
+    seen = []
+    client.on_send = seen.append
+    client.send({"type": "ping"})
+    assert seen == [{"type": "ping"}]
+    assert client.inbox == []
 
 CREATE = '{"type":"create_lobby","name":"Room"}'
 LIST = '{"type":"list_lobbies"}'
