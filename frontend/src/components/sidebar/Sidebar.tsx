@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box, Typography, Button, Divider } from '@mui/material';
+import { Dialog, DialogActions, DialogContent, DialogTitle, Box, Typography, Button, Divider } from '@mui/material';
 import { MUTED } from '../../constants';
 import type { GameSocket } from '../../hooks/useGameSocket';
 import LobbyDialog from '../lobby/LobbyDialog';
@@ -136,6 +136,15 @@ export default function Sidebar({ socket }: SidebarProps) {
                 onCreate={socket.createLobby}
                 onJoin={socket.joinLobby}
             />
+            <Dialog open={socket.disconnectDialogOpen} onClose={() => socket.closeDisconnectDialog()}>
+                <DialogTitle>Opponent Disconnected</DialogTitle>
+                <DialogContent>
+                    <Typography>Your opponent has disconnected from the game.</Typography>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={() => socket.closeDisconnectDialog()}>OK</Button>
+                </DialogActions>
+            </Dialog>
         </Box>
     );
 }

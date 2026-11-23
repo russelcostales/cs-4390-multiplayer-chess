@@ -21,6 +21,7 @@ export function useGameSocket() {
   const [fen, setFen] = useState(START_FEN);
   const [moves, setMoves] = useState<string[]>([]);
   const [turn, setTurn] = useState<Color>('white');
+  const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
 
   useEffect(() => {
     const socket = new WebSocket(WS_URL);
@@ -57,9 +58,9 @@ export function useGameSocket() {
           setMyLobby(null);
           break;
         case 'opponent_disconnected':
+          setDisconnectDialogOpen(true);
           resetBoard();
           setGame(null);
-          setError('Opponent disconnected');
           break;
         case 'error':
           setError(message.message);
@@ -93,6 +94,8 @@ export function useGameSocket() {
     fen,
     moves,
     turn,
+    disconnectDialogOpen,
+    closeDisconnectDialog: () => setDisconnectDialogOpen(false),
     clearError: () => setError(null),
     listLobbies: () => send({ type: 'list_lobbies' }),
     createLobby: (name: string, passcode?: string) => send({ type: 'create_lobby', name, passcode }),
