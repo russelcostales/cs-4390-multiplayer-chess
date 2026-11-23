@@ -1,5 +1,7 @@
 # CS 4390 Multiplayer Chess Demo
 
+Two players join a match through a lobby and play chess in the browser. The Python server holds the board and validates every move; the React client sends moves and draws the position the server sends back. The opponent's cursor is sent over a simulated UDP-style channel on top of WebSocket (in progress).
+
 ## Dependencies
 
 ### Frontend
@@ -17,33 +19,64 @@
 - Pydantic — data validation
 - pytest — Python tests
 
-### Setup
+## Setup
 
-Run from the repository root:
+Run from the repository root.
+
+### Frontend
 
 ```bash
 cd frontend
 npm install
-npm run dev
 ```
 
-Open the local URL printed in the terminal.
+### Backend
 
-### Build and Lint
-
-Run from `frontend`:
+macOS / Linux:
 
 ```bash
-npm run build
-npm run lint
+cd backend
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-## Backend
-
-Run from the repository root:
+Windows (PowerShell):
 
 ```powershell
 cd backend
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+```
+
+## Run
+
+Start the backend from `backend` with the virtual environment active. It listens on `ws://localhost:8765`:
+
+```bash
+python ws_server.py
+```
+
+Start the frontend from `frontend`:
+
+```bash
+npm run dev
+```
+
+Open the local URL printed in the terminal in two browser tabs. Create a match in one tab and join it from the other.
+
+## Test and Lint
+
+Backend, from `backend` with the virtual environment active:
+
+```bash
+python -m pytest tests
+```
+
+Frontend, from `frontend`:
+
+```bash
+npm run build
+npm run lint
 ```
