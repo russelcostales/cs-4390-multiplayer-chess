@@ -1,6 +1,8 @@
 import { Box, Button, Dialog, Typography } from '@mui/material';
 import { MUTED } from '../../constants';
 import type { Color, GameOver, GameOverReason } from '../../types/gameState';
+import {useEffect, useRef} from "react";
+import confetti from "canvas-confetti";
 
 interface GameOverDialogProps {
   gameOver: GameOver | null;
@@ -51,6 +53,27 @@ const outlineBtnSx = {
 } as const;
 
 export default function GameOverDialog({ gameOver, myColor, onBackToLobby, onClose }: GameOverDialogProps) {
+  const celebrated = useRef(false);
+
+  useEffect(() => {
+    if  (
+      !gameOver ||
+      gameOver.winner !== myColor ||
+      (gameOver.reason !== 'checkmate' && gameOver.reason !== 'resignation')  ||
+      celebrated.current
+    ) {
+      return;
+    }
+
+    celebrated.current = true;
+    confetti({
+      particleCount: 100,
+      spread: 50,
+      origin: {y: 0.60},
+      disableForReducedMotion: true,
+    });
+  }, [gameOver, myColor]);
+  
   if (gameOver === null) return null;
 
   const outcome: Outcome = gameOver.winner === null ? 'draw' : gameOver.winner === myColor ? 'won' : 'lost';
