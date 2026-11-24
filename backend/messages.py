@@ -29,6 +29,7 @@ class ErrorCode(str, Enum):
     ILLEGAL_MOVE = "ILLEGAL_MOVE"
     PROMOTION_REQUIRED = "PROMOTION_REQUIRED"
     INVALID_FORMAT = "INVALID_FORMAT"
+    INVALID_DRAW_OFFER = "INVALID_DRAW_OFFER"
 
 
 class MessageRejected(Exception):
@@ -77,6 +78,16 @@ class MoveMessage(_ClientMessage):
     type: Literal["move"]
     move: str
 
+class OfferDrawMessage(_ClientMessage):
+    type: Literal["offer_draw"]
+
+class RespondDrawMessage(_ClientMessage):
+    type: Literal["respond_draw"]
+    accept: bool
+
+class ResignMessage(_ClientMessage):
+    type: Literal["resign"]
+
 
 ClientMessage = (
     FindMatchMessage
@@ -86,6 +97,9 @@ ClientMessage = (
     | JoinLobbyMessage
     | LeaveLobbyMessage
     | MoveMessage
+    | OfferDrawMessage
+    | RespondDrawMessage
+    | ResignMessage
 )
 
 _MODELS: dict[str, type[_ClientMessage]] = {
@@ -96,6 +110,9 @@ _MODELS: dict[str, type[_ClientMessage]] = {
     "join_lobby": JoinLobbyMessage,
     "leave_lobby": LeaveLobbyMessage,
     "move": MoveMessage,
+    "offer_draw": OfferDrawMessage,
+    "respond_draw": RespondDrawMessage,
+    "resign": ResignMessage,
 }
 
 
@@ -126,6 +143,9 @@ def parse_client_message(raw: object, *, max_bytes: int = MAX_MESSAGE_BYTES) -> 
             JoinLobbyMessage,
             LeaveLobbyMessage,
             MoveMessage,
+            OfferDrawMessage,
+            RespondDrawMessage,
+            ResignMessage
         ),
     ):
         return parsed

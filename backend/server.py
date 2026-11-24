@@ -23,6 +23,9 @@ from messages import (
     ListLobbiesMessage,
     MessageRejected,
     MoveMessage,
+    OfferDrawMessage,
+    RespondDrawMessage,
+    ResignMessage,
     error_payload,
     parse_client_message,
 )
@@ -95,6 +98,8 @@ class Matchmaker:
         self._lobbies = LobbyManager()
         self._moves = moves if moves is not None else MoveService()
         self._games: dict[str, Game] = {}
+        self._draw_offers: dict[str, str] = {}
+        self._ended_games: set[str] = set()
         self._clients: dict[str, Client] = {}
         self._hits: dict[str, deque[float]] = {}
 
@@ -163,6 +168,12 @@ class Matchmaker:
             self._leave_lobby(client)
         elif isinstance(message, MoveMessage):
             self._move(client, message)
+        elif isinstance(message, OfferDrawMessage):
+            self._offer_draw(client)
+        elif isinstance(message, RespondDrawMessage):
+            self._respond_draw(client, message)
+        elif isinstance(message, ResignMessage):
+            self._resign(client)
         else:
             raise MessageRejected(ErrorCode.INVALID_MESSAGE, "Unknown message type")
 
@@ -214,7 +225,8 @@ class Matchmaker:
 
     def _leave_lobby(self, client: Client) -> None:
         if self._lobbies.lobby_of(client.id) is None:
-            raise MessageRejected(ErrorCode.NOT_IN_LOBBY, "Not in a lobby")
+            self._send_or_drop(client, {"type": "lobby_left"})
+            return
         self._leave(client.id)
         self._send_or_drop(client, {"type": "lobby_left"})
 
@@ -223,6 +235,8 @@ class Matchmaker:
         game = self._games.get(lobby.id) if lobby else None
         if game is None:
             raise MessageRejected(ErrorCode.NOT_IN_GAME, "Not in a game")
+        if game.id in self._ended_games:
+            raise MessageRejected(ErrorCode.GAME_OVER, "Game is over")
         result = self._moves.submit_move(game.id, client.id, message.move)
         if not result.ok:
             raise MessageRejected(ErrorCode(result.code), result.message)
@@ -237,6 +251,8 @@ class Matchmaker:
         if result is None:
             return
         game = self._games.pop(result.lobby.id, None)
+        self._draw_offers.pop(result.lobby.id, None)
+        self._ended_games.discard(result.lobby.id)  
         if game is None:
             return
         self._moves.close_game(game.id)
@@ -280,6 +296,119 @@ class Matchmaker:
         hits.append(now)
         return True
 
+    def _offer_draw(self, client: Client) -> None:
+        lobby = self._lobbies.lobby_of(client.id)
+        game = self._games.get(lobby.id) if lobby else None
+
+        if game is None:
+            raise MessageRejected(ErrorCode.NOT_IN_GAME, "Not in a game")
+
+        if game.id in self._ended_games:
+            raise MessageRejected(ErrorCode.GAME_OVER, "Game is over")
+
+        state = self._moves.state(game.id)
+        if state is not None and state.game_over:
+            raise MessageRejected(ErrorCode.GAME_OVER, "Game is over")
+
+        offered_by = self._draw_offers.get(game.id)
+
+        if offered_by == client.id:
+            return
+
+        if offered_by is not None:
+            raise MessageRejected(ErrorCode.INVALID_DRAW_OFFER, "Draw offer is already pending")
+
+        self._draw_offers[game.id] = client.id
+
+        opponent_id = game.opponent_of(client.id)
+        opponent = self._clients.get(opponent_id)
+
+        if opponent is not None:
+            try:
+                opponent.send({
+                    "type": "draw_offered",
+                    "gameId": game.id,
+                })
+            except DeliveryError:
+                self._draw_offers.pop(game.id, None)
+                opponent.connected = False
+                self._leave(opponent.id)
+
+    def _respond_draw(self, client: Client, message: RespondDrawMessage) -> None:
+        lobby = self._lobbies.lobby_of(client.id)
+        game = self._games.get(lobby.id) if lobby else None
+
+        if game is None:
+            raise MessageRejected(ErrorCode.NOT_IN_GAME, "Not in a game")
+
+        offered_by = self._draw_offers.get(game.id)
+        if offered_by is None:
+            raise MessageRejected(ErrorCode.INVALID_DRAW_OFFER, "No draw offer is pending")
+
+        if offered_by == client.id:
+            raise MessageRejected(ErrorCode.INVALID_DRAW_OFFER, "You cannot respond to your own draw offer")
+
+        self._draw_offers.pop(game.id, None)
+
+        if not message.accept:
+            for player_id in (game.white_id, game.black_id):
+                self._send_or_drop(self._clients[player_id], {
+                    "type": "draw_declined",
+                    "gameId": game.id,
+                })
+            return
+
+        self._ended_games.add(game.id)
+        state = self._moves.state(game.id)
+
+        update = {
+            "type": "move_made",
+            "gameId": game.id,
+            "uci": None,
+            "san": None,
+            "fen": state.fen if state is not None else None,
+            "turn": state.turn if state is not None else None,
+            "isCheck": False,
+            "gameOver": True,
+            "result": "1/2-1/2",
+            "winner": None,
+            "termination": "draw_agreement",
+        }
+
+        for player_id in (game.white_id, game.black_id):
+            self._send_or_drop(self._clients[player_id], update)
+
+    def _resign(self, client: Client) -> None:
+        lobby = self._lobbies.lobby_of(client.id)
+        game = self._games.get(lobby.id) if lobby else None
+
+        if game is None:
+            raise MessageRejected(ErrorCode.NOT_IN_GAME, "Not in a game")
+
+        if game.id in self._ended_games:
+            raise MessageRejected(ErrorCode.GAME_OVER, "Game is over")
+
+        winner_id = game.opponent_of(client.id)
+        winner = game.color_of(winner_id)
+        self._ended_games.add(game.id)
+
+        state = self._moves.state(game.id)
+        update = {
+            "type": "move_made",
+            "gameId": game.id,
+            "uci": None,
+            "san": None,
+            "fen": state.fen if state is not None else None,
+            "turn": state.turn if state is not None else None,
+            "isCheck": False,
+            "gameOver": True,
+            "result": "1-0" if winner == "white" else "0-1",
+            "winner": winner,
+            "termination": "resignation",
+        }
+
+        for player_id in (game.white_id, game.black_id):
+            self._send_or_drop(self._clients[player_id], update)
 
 def _display_name(client_id: str, display_name: str | None) -> str:
     if display_name is None:

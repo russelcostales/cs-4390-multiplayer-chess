@@ -4,6 +4,8 @@ import { MUTED } from '../../constants';
 import type { GameSocket } from '../../hooks/useGameSocket';
 import LobbyDialog from '../lobby/LobbyDialog';
 import MoveHistory from './MoveHistory';
+import GameControls from '../game/GameControls';
+import GameOverDialog from '../game/GameOverDialog';
 
 interface SidebarProps {
     socket: GameSocket;
@@ -103,31 +105,16 @@ export default function Sidebar({ socket }: SidebarProps) {
                 <MoveHistory moves={moves} />
             </Box>
 
-            <Box sx={{ display: 'flex', gap: '12px', pt: '20px' }}>
-                {(['Offer draw', 'Resign'] as const).map((label) => (
-                    <Button
-                        key={label}
-                        disabled
-                        variant="outlined"
-                        sx={{
-                            fontSize: 13,
-                            fontWeight: 500,
-                            textTransform: 'none',
-                            color: '#b4b4b4',
-                            borderColor: '#404040',
-                            borderRadius: '8px',
-                            px: '16px',
-                            height: 34,
-                            '&.Mui-disabled': {
-                                color: 'rgba(180,180,180,.45)',
-                                borderColor: 'rgba(64,64,64,.6)',
-                            },
-                        }}
-                    >
-                        {label}
-                    </Button>
-                ))}
-            </Box>
+            {game && (
+                <GameControls
+                    disabled={socket.gameOver !== null}
+                    drawOffer={socket.drawOffer}
+                    onOfferDraw={socket.offerDraw}
+                    onAcceptDraw={socket.acceptDraw}
+                    onDeclineDraw={socket.declineDraw}
+                    onResign={socket.resign}
+                />
+            )}
 
             <LobbyDialog
                 open={lobbyOpen}
@@ -145,6 +132,15 @@ export default function Sidebar({ socket }: SidebarProps) {
                     <Button onClick={() => socket.closeDisconnectDialog()}>OK</Button>
                 </DialogActions>
             </Dialog>
+
+            {socket.gameOverDialogOpen && (
+                <GameOverDialog
+                    gameOver={socket.gameOver}
+                    myColor={game?.color ?? 'white'}
+                    onClose={() => socket.closeGameOver()}
+                    onBackToLobby={socket.backToLobby}
+                />
+            )}
         </Box>
     );
 }
