@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { START_FEN, WS_URL } from '../constants';
-import type { Color } from '../types/gameState';
+import type { DrawOfferState, GameOver, Color, GameOverReason } from '../types/gameState';
 import type { ClientMessage, LobbySummary, ServerMessage } from '../types/protocol';
 
 export type SocketStatus = 'connecting' | 'open' | 'closed';
@@ -21,6 +21,11 @@ export function useGameSocket() {
   const [fen, setFen] = useState(START_FEN);
   const [moves, setMoves] = useState<string[]>([]);
   const [turn, setTurn] = useState<Color>('white');
+  const [disconnectDialogOpen, setDisconnectDialogOpen] = useState(false);
+  const [drawOffer, setDrawOffer] = useState<DrawOfferState>('none');
+  const [gameOver, setGameOver] = useState<GameOver | null>(null);
+  const [gameOverDialogOpen, setGameOverDialogOpen] = useState(false);
+
 
   useEffect(() => {
     const socket = new WebSocket(WS_URL);
@@ -44,22 +49,50 @@ export function useGameSocket() {
           setLobbies(message.lobbies);
           break;
         case 'match_started':
+          setGameOver(null);
+          setGameOverDialogOpen(false);
+          setDrawOffer('none');
           resetBoard();
           setMyLobby(null);
           setGame({ gameId: message.gameId, color: message.color, opponent: message.opponent });
           break;
         case 'move_made':
-          setFen(message.fen);
-          setMoves((previous) => [...previous, message.san]);
-          setTurn(message.turn);
+          if (message.fen) setFen(message.fen);
+          if (message.turn) setTurn(message.turn);
+          if (message.san) {
+            setMoves((previous) => [...previous, message.san as string]);
+          }
+
+          if (message.gameOver) {
+            setGameOver({
+              winner: message.winner,
+              reason: message.termination as GameOverReason,
+            });
+            setGameOverDialogOpen(true);
+            setDrawOffer('none');
+          }
           break;
+        case 'draw_offered':
+          setDrawOffer('offered_by_opponent');
+          break;
+        case 'draw_declined':
+          setDrawOffer('none');
+          break;  
         case 'lobby_left':
           setMyLobby(null);
+          setGame(null);
+          setGameOver(null);
+          setGameOverDialogOpen(false);
+          setDrawOffer('none');
+          setFen(START_FEN);
+          setMoves([]);
+          setTurn('white');
           break;
         case 'opponent_disconnected':
+          setDrawOffer('none');
+          setDisconnectDialogOpen(true);
           resetBoard();
           setGame(null);
-          setError('Opponent disconnected');
           break;
         case 'error':
           setError(message.message);
@@ -84,6 +117,33 @@ export function useGameSocket() {
     }
   };
 
+  const offerDraw = () => {
+    if (gameOver) return;
+    setDrawOffer('offered_by_me');
+    send({ type: 'offer_draw' });
+  };
+
+  const acceptDraw = () => {
+    send({ type: 'respond_draw', accept: true });
+  };
+
+  const declineDraw = () => {
+    setDrawOffer('none');
+    send({ type: 'respond_draw', accept: false });
+  };
+
+  const closeGameOver = () => {
+    setGameOverDialogOpen(false);
+  };
+  
+  const backToLobby = () => {
+    send({ type: 'leave_lobby' });
+  };
+
+  const resign = () => {
+    send({ type: 'resign' });
+  };
+
   return {
     status,
     lobbies,
@@ -93,12 +153,23 @@ export function useGameSocket() {
     fen,
     moves,
     turn,
+    disconnectDialogOpen,
+    closeDisconnectDialog: () => setDisconnectDialogOpen(false),
     clearError: () => setError(null),
     listLobbies: () => send({ type: 'list_lobbies' }),
     createLobby: (name: string, passcode?: string) => send({ type: 'create_lobby', name, passcode }),
     joinLobby: (lobbyId: string, passcode?: string) => send({ type: 'join_lobby', lobbyId, passcode }),
     leaveLobby: () => send({ type: 'leave_lobby' }),
     makeMove: (uci: string) => send({ type: 'move', move: uci }),
+    drawOffer,
+    gameOver,
+    gameOverDialogOpen,
+    offerDraw,
+    acceptDraw,
+    declineDraw,
+    closeGameOver,
+    backToLobby,
+    resign,
   };
 }
 

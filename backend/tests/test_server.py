@@ -245,8 +245,14 @@ def test_leave_when_not_in_a_lobby_is_rejected():
     mm = Matchmaker()
     client = mm.connect("a")
     mm.handle_message(client, LEAVE)
+    assert client.inbox == [{"type": "lobby_left"}]
+    
+def test_resign_without_a_game_is_rejected():
+    mm = Matchmaker()
+    client = mm.connect("a")
+    mm.handle_message(client, '{"type":"resign"}')
     assert client.inbox == [
-        {"type": "error", "code": "NOT_IN_LOBBY", "message": "Not in a lobby"}
+        {"type": "error", "code": "NOT_IN_GAME", "message": "Not in a game"}
     ]
 
 
@@ -363,7 +369,6 @@ def test_both_match_notifications_failing_leaves_no_game():
         (None, "Invalid message"),
         (5, "Invalid message"),
         (b"\xff", "Invalid message"),
-        ('{"type":"resign"}', "Unknown message type"),
         ('{"type":"find_match"}', "Unknown message type"),
         ('{"type":"match_started","gameId":"1","color":"white"}', "Unknown message type"),
         ('{"type":""}', "Unknown message type"),
@@ -451,7 +456,7 @@ def test_lobby_messages_are_rate_limited():
 
     for _ in range(3):
         mm.handle_message(client, LEAVE)
-    assert [message["code"] for message in client.inbox] == ["NOT_IN_LOBBY"] * 3
+    assert client.inbox == [{"type": "lobby_left"}] * 3
 
     mm.handle_message(client, CREATE)
     assert client.inbox[-1] == {
