@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { START_FEN, WS_URL } from '../constants';
 import type { DrawOfferState, GameOver, Color, GameOverReason } from '../types/gameState';
 import type { ClientMessage, LobbySummary, ServerMessage } from '../types/protocol';
+import { DEFAULT_NET_CONFIG, EMPTY_NET_STATS, type NetConfig, type NetStats } from '../types/network';
 
 export type SocketStatus = 'connecting' | 'open' | 'closed';
 
@@ -25,6 +26,14 @@ export function useGameSocket() {
   const [drawOffer, setDrawOffer] = useState<DrawOfferState>('none');
   const [gameOver, setGameOver] = useState<GameOver | null>(null);
   const [gameOverDialogOpen, setGameOverDialogOpen] = useState(false);
+  const [netConfig, setNetConfig] = useState<NetConfig>(DEFAULT_NET_CONFIG);
+  const [netStats, setNetStats] = useState<NetStats>(EMPTY_NET_STATS);
+  // True once the server has sent net_stats. Before that, it would reject
+  // net_config and net_reset_stats as unknown message types.
+  const [netSupported, setNetSupported] = useState(false);
+  // Read by the socket handlers, which are created once.
+  const netConfigRef = useRef(netConfig);
+  const netSupportedRef = useRef(false);
 
 
   useEffect(() => {
@@ -38,7 +47,11 @@ export function useGameSocket() {
     };
 
     socket.onopen = () => setStatus('open');
-    socket.onclose = () => setStatus('closed');
+    socket.onclose = () => {
+      setStatus('closed');
+      netSupportedRef.current = false;
+      setNetSupported(false);
+    };
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data) as ServerMessage;
       switch (message.type) {
@@ -94,6 +107,16 @@ export function useGameSocket() {
           resetBoard();
           setGame(null);
           break;
+        case 'net_stats':
+          setNetStats(message.stats);
+          if (!netSupportedRef.current) {
+            netSupportedRef.current = true;
+            setNetSupported(true);
+            // Apply settings chosen before the server started sending stats.
+            const configMessage: ClientMessage = { type: 'net_config', config: netConfigRef.current };
+            socket.send(JSON.stringify(configMessage));
+          }
+          break;
         case 'error':
           setError(message.message);
           break;
@@ -144,6 +167,18 @@ export function useGameSocket() {
     send({ type: 'resign' });
   };
 
+  const updateNetConfig = (changes: Partial<NetConfig>) => {
+    const next = { ...netConfigRef.current, ...changes };
+    netConfigRef.current = next;
+    setNetConfig(next);
+    if (netSupportedRef.current) send({ type: 'net_config', config: next });
+  };
+
+  const resetNetStats = () => {
+    setNetStats(EMPTY_NET_STATS);
+    if (netSupportedRef.current) send({ type: 'net_reset_stats' });
+  };
+
   return {
     status,
     lobbies,
@@ -170,6 +205,11 @@ export function useGameSocket() {
     closeGameOver,
     backToLobby,
     resign,
+    netConfig,
+    netStats,
+    netSupported,
+    updateNetConfig,
+    resetNetStats,
   };
 }
 
