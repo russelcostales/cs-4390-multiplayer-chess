@@ -35,8 +35,8 @@ export type ClientMessage =
   | { type: 'offer_draw' }
   | { type: 'respond_draw'; accept: boolean }
   | { type: 'resign'}
-  // Simulated UDP channel. The backend doesn't handle these yet, so the client
-  // sends them only after it has received a net_stats message.
+  | { type: 'cursor'; x: number; y: number }
+  // simulated udp settings. client only sends these after the first net_stats shows up
   | { type: 'net_config'; config: NetConfig }
   | { type: 'net_reset_stats' }
 
@@ -64,6 +64,15 @@ export interface DrawDeclined {
   gameId: string;
 }
 
+// cursor packets from the server. which fields show up depends on the delta toggle:
+// x/y = plain 0-1 position (delta off), kx/ky = keyframe, dx/dy = change since the last packet.
+// kx/ky/dx/dy are in 0-1000 units
+export type CursorPacket = { type: 'cursor'; seq: number } & (
+  | { x: number; y: number }
+  | { kx: number; ky: number }
+  | { dx: number; dy: number }
+);
+
 export type ServerMessage =
   | { type: 'lobby_created'; lobby: LobbySummary }
   | { type: 'lobby_list'; lobbies: LobbySummary[] }
@@ -73,6 +82,7 @@ export type ServerMessage =
   | MoveMade
   | DrawOffered
   | DrawDeclined
+  | CursorPacket
   // Current counters for the simulated UDP channel.
   | { type: 'net_stats'; stats: NetStats }
   | { type: 'error'; code: ErrorCode; message: string };

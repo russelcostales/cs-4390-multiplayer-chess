@@ -3,7 +3,7 @@
 import json
 from enum import Enum
 from typing import Literal
-
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 
@@ -88,6 +88,28 @@ class RespondDrawMessage(_ClientMessage):
 class ResignMessage(_ClientMessage):
     type: Literal["resign"]
 
+class CursorMessage(_ClientMessage):
+    type: Literal["cursor"]
+    # 0-1 instead of pixels so it doesn't care how big each player's board is
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+
+class NetSettings(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # same limits as LOSS_PERCENT_MAX and DELAY_MS_MAX in frontend/src/types/network.ts
+    lossPercent: float = Field(ge=0, le=50)
+    delayMs: float = Field(ge=0, le=500)
+    deltaCompression: bool
+    huffmanCoding: bool
+
+
+class NetConfigMessage(_ClientMessage):
+    type: Literal["net_config"]
+    config: NetSettings
+
+
+class NetResetStatsMessage(_ClientMessage):
+    type: Literal["net_reset_stats"]
 
 ClientMessage = (
     FindMatchMessage
@@ -100,6 +122,9 @@ ClientMessage = (
     | OfferDrawMessage
     | RespondDrawMessage
     | ResignMessage
+    | CursorMessage
+    | NetConfigMessage
+    | NetResetStatsMessage
 )
 
 _MODELS: dict[str, type[_ClientMessage]] = {
@@ -113,6 +138,9 @@ _MODELS: dict[str, type[_ClientMessage]] = {
     "offer_draw": OfferDrawMessage,
     "respond_draw": RespondDrawMessage,
     "resign": ResignMessage,
+    "cursor": CursorMessage,
+    "net_config": NetConfigMessage,
+    "net_reset_stats": NetResetStatsMessage,
 }
 
 
@@ -145,7 +173,10 @@ def parse_client_message(raw: object, *, max_bytes: int = MAX_MESSAGE_BYTES) -> 
             MoveMessage,
             OfferDrawMessage,
             RespondDrawMessage,
-            ResignMessage
+            ResignMessage,
+            CursorMessage,
+            NetConfigMessage,
+            NetResetStatsMessage,
         ),
     ):
         return parsed

@@ -1,5 +1,4 @@
-from lib.delta import apply, diff, is_empty
-
+from lib.delta import CursorDeltaEncoder, apply, diff, is_empty
 
 def test_no_changes_gives_empty_delta():
     state = {"x": 1, "y": 2}
@@ -43,3 +42,29 @@ def test_from_empty_state_sends_everything():
     new = {"x": 3, "y": 4}
     assert diff({}, new) == {"set": new}
     assert apply({}, diff({}, new)) == new
+
+def test_cursor_encoder_starts_with_keyframe_then_deltas():
+    enc = CursorDeltaEncoder()
+    assert enc.encode(0.5, 0.5) == {"kx": 500, "ky": 500}
+    assert enc.encode(0.504, 0.498) == {"dx": 4, "dy": -2}
+
+
+def test_cursor_encoder_sends_keyframe_every_n():
+    enc = CursorDeltaEncoder(keyframe_every=3)
+    out = [enc.encode(i / 100, 0.5) for i in range(1, 7)]
+    assert ["kx" in packet for packet in out] == [True, False, False, True, False, False]
+
+
+def test_cursor_encoder_repeat_position_is_keyframe():
+    enc = CursorDeltaEncoder()
+    enc.encode(0.2, 0.2)
+    enc.encode(0.3, 0.3)
+    assert enc.encode(0.3, 0.3) == {"kx": 300, "ky": 300}
+
+
+def test_cursor_encoder_reset_forces_keyframe():
+    enc = CursorDeltaEncoder()
+    enc.encode(0.2, 0.2)
+    enc.reset()
+    assert "kx" in enc.encode(0.3, 0.3)
+    
