@@ -6,6 +6,7 @@ import LobbyDialog from '../lobby/LobbyDialog';
 import MoveHistory from './MoveHistory';
 import GameControls from '../game/GameControls';
 import GameOverDialog from '../game/GameOverDialog';
+import NetworkPanel from '../network/NetworkPanel';
 
 interface SidebarProps {
     socket: GameSocket;
@@ -115,6 +116,14 @@ export default function Sidebar({ socket }: SidebarProps) {
                     onResign={socket.resign}
                 />
             )}
+
+            <NetworkPanel
+                config={socket.netConfig}
+                stats={socket.netStats}
+                supported={socket.netSupported}
+                onConfigChange={socket.updateNetConfig}
+                onResetStats={socket.resetNetStats}
+            />
 
             <LobbyDialog
                 open={lobbyOpen}

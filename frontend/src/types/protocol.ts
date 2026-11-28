@@ -1,4 +1,5 @@
 import type { Color } from './gameState';
+import type { NetConfig, NetStats } from './network';
 
 export interface LobbySummary {
   id: string;
@@ -34,6 +35,10 @@ export type ClientMessage =
   | { type: 'offer_draw' }
   | { type: 'respond_draw'; accept: boolean }
   | { type: 'resign'}
+  // Simulated UDP channel. The backend doesn't handle these yet, so the client
+  // sends them only after it has received a net_stats message.
+  | { type: 'net_config'; config: NetConfig }
+  | { type: 'net_reset_stats' }
 
 export interface MoveMade {
   type: 'move_made';
@@ -68,4 +73,6 @@ export type ServerMessage =
   | MoveMade
   | DrawOffered
   | DrawDeclined
+  // Current counters for the simulated UDP channel.
+  | { type: 'net_stats'; stats: NetStats }
   | { type: 'error'; code: ErrorCode; message: string };
