@@ -548,3 +548,153 @@ def test_move_without_a_game_is_rejected():
     client = mm.connect("a")
     mm.handle_message(client, move("e2e4"))
     assert of_type(client, "error")[0]["code"] == "NOT_IN_GAME"
+
+def cursor(x: float, y: float) -> str:
+    return json.dumps({"type": "cursor", "x": x, "y": y})
+
+
+def test_cursor_is_relayed_to_opponent_only():
+    mm, host, guest = started_game()
+    mm.handle_message(host, cursor(0.25, 0.75))
+    assert of_type(guest, "cursor") == [{"type": "cursor", "kx": 250, "ky": 750, "seq": 1}]
+    assert of_type(host, "cursor") == []
+
+
+def test_cursor_without_a_game_is_dropped_silently():
+    mm = Matchmaker()
+    client = mm.connect("a")
+    mm.handle_message(client, cursor(0.5, 0.5))
+    assert client.inbox == []
+
+
+def test_cursor_out_of_range_is_rejected():
+    mm, host, guest = started_game()
+    mm.handle_message(host, cursor(1.5, 0.5))
+    assert host.inbox[-1]["code"] == "INVALID_MESSAGE"
+    assert of_type(guest, "cursor") == []
+
+
+def test_cursor_has_its_own_rate_limit():
+    clock = ManualClock()
+    mm = Matchmaker(
+        rng=ScriptedRng([0.0]),
+        rate_limit=3,
+        rate_window_seconds=10,
+        cursor_rate_limit=5,
+        cursor_rate_window_seconds=1,
+        clock=clock,
+    )
+    host = mm.connect("a")
+    guest = mm.connect("b")
+    mm.handle_message(host, CREATE)
+    mm.handle_message(guest, join("1"))
+
+    for _ in range(8):
+        mm.handle_message(host, cursor(0.5, 0.5))
+    assert len(of_type(guest, "cursor")) == 5
+    assert of_type(host, "error") == []
+
+    # cursor spam didn't eat into the normal limit
+    mm.handle_message(host, move("e2e4"))
+    assert of_type(host, "move_made")
+
+    clock.now = 1
+    mm.handle_message(host, cursor(0.1, 0.1))
+    assert len(of_type(guest, "cursor")) == 6
+
+def net_config(loss: float = 0, delay: float = 0, delta: bool = True) -> str:
+    return json.dumps({
+        "type": "net_config",
+        "config": {"lossPercent": loss, "delayMs": delay, "deltaCompression": delta, "huffmanCoding": True},
+    })
+
+
+def game_with_net_rng(net_rng) -> tuple[Matchmaker, Client, Client]:
+    mm = Matchmaker(rng=ScriptedRng([0.0]), net_rng=net_rng)
+    host = mm.connect("a")
+    guest = mm.connect("b")
+    mm.handle_message(host, CREATE)
+    mm.handle_message(guest, join("1"))
+    return mm, host, guest
+
+
+def test_cursor_can_be_lost_by_the_simulator():
+    mm, host, guest = game_with_net_rng(ScriptedRng([0.1]))
+    mm.handle_message(guest, net_config(loss=20))
+    mm.handle_message(host, cursor(0.5, 0.5))
+    assert of_type(guest, "cursor") == []
+
+    mm.send_net_stats()
+    stats = of_type(guest, "net_stats")[-1]["stats"]
+    assert stats["packetsSent"] == 1
+    assert stats["packetsDropped"] == 1
+
+
+def test_delayed_cursor_goes_through_send_later():
+    mm, host, guest = game_with_net_rng(ScriptedRng([0.5]))
+    mm.handle_message(guest, net_config(delay=200))
+    later = []
+    guest.on_send_later = lambda message, delay: later.append((message, delay))
+
+    mm.handle_message(host, cursor(0.5, 0.5))
+    assert later[0][0] == {"type": "cursor", "kx": 500, "ky": 500, "seq": 1}
+    assert later[0][1] == pytest.approx(0.2)
+    assert of_type(guest, "cursor") == []
+
+
+def test_net_config_out_of_range_is_rejected():
+    mm = Matchmaker()
+    client = mm.connect("a")
+    mm.handle_message(client, net_config(loss=80))
+    assert client.inbox[-1]["code"] == "INVALID_MESSAGE"
+
+
+def test_net_stats_are_sent_outside_a_game():
+    mm = Matchmaker()
+    client = mm.connect("a")
+    mm.send_net_stats()
+    assert of_type(client, "net_stats")[0]["stats"]["packetsSent"] == 0
+
+
+def test_net_reset_stats_clears_counters():
+    mm, host, guest = started_game()
+    mm.handle_message(host, cursor(0.5, 0.5))
+    mm.handle_message(guest, '{"type":"net_reset_stats"}')
+    mm.send_net_stats()
+    assert of_type(guest, "net_stats")[-1]["stats"]["packetsSent"] == 0
+
+def test_cursor_seq_counts_up_per_receiver():
+    mm, host, guest = started_game()
+    for _ in range(3):
+        mm.handle_message(host, cursor(0.5, 0.5))
+    mm.handle_message(guest, cursor(0.1, 0.1))
+
+    assert [m["seq"] for m in of_type(guest, "cursor")] == [1, 2, 3]
+    # host's stream has its own counter, so it starts at 1 too
+    assert [m["seq"] for m in of_type(host, "cursor")] == [1]
+
+
+def test_cursor_sends_deltas_after_first_keyframe():
+    mm, host, guest = started_game()
+    mm.handle_message(host, cursor(0.5, 0.5))
+    mm.handle_message(host, cursor(0.51, 0.5))
+    assert of_type(guest, "cursor") == [
+        {"type": "cursor", "kx": 500, "ky": 500, "seq": 1},
+        {"type": "cursor", "dx": 10, "dy": 0, "seq": 2},
+    ]
+
+
+def test_cursor_with_delta_off_sends_plain_floats():
+    mm, host, guest = started_game()
+    mm.handle_message(guest, net_config(delta=False))
+    mm.handle_message(host, cursor(0.25, 0.75))
+    assert of_type(guest, "cursor") == [{"type": "cursor", "x": 0.25, "y": 0.75, "seq": 1}]
+
+
+def test_delta_shrinks_bytes_sent():
+    mm, host, guest = started_game()
+    for i in range(5):
+        mm.handle_message(host, cursor(0.123456789 + i / 1000, 0.987654321))
+    mm.send_net_stats()
+    stats = of_type(guest, "net_stats")[-1]["stats"]
+    assert stats["bytesSent"] < stats["bytesRaw"]

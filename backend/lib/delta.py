@@ -30,3 +30,44 @@ def apply(old: dict, delta: dict) -> dict:
 def is_empty(delta: dict) -> bool:
     # nothing changed, so there's nothing worth sending
     return not delta
+
+
+# --- cursor stream ---------------------------------------------------------
+# diff() above doesn't help the cursor since x and y both change on almost every
+# packet. so the cursor gets rounded to ints and we send how far it moved instead.
+
+CURSOR_SCALE = 1000  # 0-1 becomes 0-1000, still finer than a pixel on our board
+KEYFRAME_EVERY = 10
+
+
+class CursorDeltaEncoder:
+    """Sender side of one cursor stream. Sends the full position (a keyframe) every
+    KEYFRAME_EVERY packets and just dx/dy from the last packet in between."""
+
+    def __init__(self, keyframe_every: int = KEYFRAME_EVERY) -> None:
+        self._keyframe_every = keyframe_every
+        self._last: tuple[int, int] | None = None
+        self._since_keyframe = 0
+
+    def encode(self, x: float, y: float) -> dict:
+        qx, qy = round(x * CURSOR_SCALE), round(y * CURSOR_SCALE)
+        # keyframe if nothing's been sent yet, it's been a while, or the client resent
+        # the same spot (it stopped moving, and this fixes a lost last delta)
+        if (
+            self._last is None
+            or self._since_keyframe >= self._keyframe_every - 1
+            or (qx, qy) == self._last
+        ):
+            self._last = (qx, qy)
+            self._since_keyframe = 0
+            return {"kx": qx, "ky": qy}
+
+        dx, dy = qx - self._last[0], qy - self._last[1]
+        self._last = (qx, qy)
+        self._since_keyframe += 1
+        return {"dx": dx, "dy": dy}
+
+    def reset(self) -> None:
+        # next encode() will be a keyframe
+        self._last = None
+        self._since_keyframe = 0
